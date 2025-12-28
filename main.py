@@ -1,6 +1,7 @@
 import pandas as pd
 import ast
-from sklearn.feature_extraction.text import CountVectorizer
+import re
+from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from sklearn.metrics.pairwise import cosine_similarity
 import questionary
 
@@ -44,7 +45,16 @@ def normalize_companies(companies):
     return [mapping.get(c, c) for c in companies]
 
 movies['production_companies'] = movies['production_companies'].apply(extract_names).apply(normalize_companies)
-movies['overview'] = movies['overview'].apply(str.split)
+
+def clean_overview(text):
+    """Clean overview text: remove punctuation, stop words, and short words."""
+    # Remove punctuation and convert to lowercase
+    text = re.sub(r'[^\w\s]', '', text.lower())
+    words = text.split()
+    # Filter out stop words and words shorter than 4 characters
+    return [w for w in words if w not in ENGLISH_STOP_WORDS and len(w) >= 4]
+
+movies['overview'] = movies['overview'].apply(clean_overview)
 
 # Create tags and final dataframe (boost important features by repeating 3x)
 movies['tags'] = (
