@@ -1,18 +1,30 @@
-import pandas as pd, ast, re, pickle, os, questionary
+from flask import Flask, render_template, jsonify, request
+import pandas as pd
+import ast
+import re
+import pickle
+import os
 from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from sklearn.metrics.pairwise import cosine_similarity
 
+app = Flask(__name__)
+
 MODEL_FILE = 'model.pkl'
-COMPANY_MAP = {'MarvelStudios': 'Marvel', 'MarvelEnterprises': 'Marvel', 'DCComics': 'DC',
-               'DCEntertainment': 'DC', 'WarnerBros.Pictures': 'WarnerBros', 'WarnerBros.': 'WarnerBros'}
+COMPANY_MAP = {
+    'MarvelStudios': 'Marvel', 'MarvelEnterprises': 'Marvel',
+    'DCComics': 'DC', 'DCEntertainment': 'DC',
+    'WarnerBros.Pictures': 'WarnerBros', 'WarnerBros.': 'WarnerBros'
+}
 
 def extract_names(obj, limit=None, job=None):
     try:
         data = ast.literal_eval(obj)
-        if job: return [i['name'].replace(" ", "") for i in data if i.get('job') == job][:1]
+        if job:
+            return [i['name'].replace(" ", "") for i in data if i.get('job') == job][:1]
         names = [i['name'].replace(" ", "") for i in data]
         return names[:limit] if limit else names
-    except: return []
+    except:
+        return []
 
 def clean_text(text):
     words = re.sub(r'[^\w\s]', '', text.lower()).split()
@@ -45,48 +57,74 @@ def train_model():
     sim = cosine_similarity(vectors)
 
     print("Saving model...")
-    with open(MODEL_FILE, 'wb') as f: pickle.dump({'df': df, 'sim': sim}, f)
+    with open(MODEL_FILE, 'wb') as f:
+        pickle.dump({'df': df, 'sim': sim}, f)
     return df, sim
 
 def load_model():
     if os.path.exists(MODEL_FILE):
         print("Loading saved model...")
-        with open(MODEL_FILE, 'rb') as f: data = pickle.load(f)
+        with open(MODEL_FILE, 'rb') as f:
+            data = pickle.load(f)
         return data['df'], data['sim']
     return train_model()
 
+# Load model on startup
 df, sim = load_model()
 
-def recommend(movie):
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/api/movies')
+def get_movies():
+    """Return all movie titles for autocomplete"""
+    return jsonify(df['title'].tolist())
+
+@app.route('/api/recommend')
+def recommend():
+    """Get recommendations for a movie"""
+    movie = request.args.get('movie', '')
     norm = movie.lower().replace("-", "").replace(" ", "").replace(":", "")
     matches = df[df['title_norm'] == norm]
 
     if matches.empty:
+        # Try partial match
         similar = df[df['title_norm'].str.contains(norm, regex=False)]
         if not similar.empty:
-            print(f"\nMovie '{movie}' not found. Did you mean:")
-            for t in similar['title'].head(5).values: print(f"  - {t}")
-        else:
-            print(f"\nError: Movie '{movie}' not found.")
-        return
+            suggestions = similar['title'].head(5).tolist()
+            return jsonify({'error': 'not_found', 'suggestions': suggestions})
+        return jsonify({'error': 'not_found', 'suggestions': []})
 
     idx = matches.index[0]
-    top = sim[idx].argsort()[-6:-1][::-1]
     input_tags = set(df.loc[idx, 'tags'].split())
 
-    print(f"\n--- Recommendations for '{df.loc[idx, 'title']}' ---")
-    for i in top:
+    # Get top 10 candidates, then filter by threshold
+    SIMILARITY_THRESHOLD = 0.15  # Minimum 15% match
+    top_candidates = sim[idx].argsort()[-11:-1][::-1]  # Get more candidates to filter
+
+    MIN_COMMON_TAGS = 2  # Require at least 2 explainable reasons
+
+    recommendations = []
+    for i in top_candidates:
+        score = sim[idx][i]
+        if score < SIMILARITY_THRESHOLD:
+            continue
         common = [t for t in (input_tags & set(df.iloc[i]['tags'].split())) if len(t) > 3][:4]
-        print(f"{df.iloc[i]['title']}  ({', '.join(common)})")
+        if len(common) < MIN_COMMON_TAGS:
+            continue  # Skip if not enough explainable reasons
+        recommendations.append({
+            'title': df.iloc[i]['title'],
+            'reasons': common,
+            'match': round(score * 100)  # Convert to percentage
+        })
+        if len(recommendations) >= 5:  # Limit to 5 results
+            break
 
-print("System Ready!\nType to search, arrow keys to select, Enter to confirm, Ctrl+C to quit.\n")
+    return jsonify({
+        'movie': df.loc[idx, 'title'],
+        'recommendations': recommendations
+    })
 
-while True:
-    try:
-        name = questionary.autocomplete("Enter movie name:", choices=df['title'].tolist(), match_middle=True).ask()
-        if name is None or name.lower() == 'quit': break
-        recommend(name)
-        print()
-    except KeyboardInterrupt:
-        break
-print("Goodbye!")
+if __name__ == '__main__':
+    app.run(debug=True)
