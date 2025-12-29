@@ -7,14 +7,23 @@ import os
 from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from sklearn.metrics.pairwise import cosine_similarity
 
-app = Flask(__name__)
-
+# Constants
 MODEL_FILE = 'model.pkl'
+SIMILARITY_THRESHOLD = 0.15
+MIN_COMMON_TAGS = 2
+MAX_RECOMMENDATIONS = 5
 COMPANY_MAP = {
     'MarvelStudios': 'Marvel', 'MarvelEnterprises': 'Marvel',
     'DCComics': 'DC', 'DCEntertainment': 'DC',
     'WarnerBros.Pictures': 'WarnerBros', 'WarnerBros.': 'WarnerBros'
 }
+
+# Precompiled regex
+CLEAN_REGEX = re.compile(r'[^\w\s]')
+NORM_REGEX = re.compile(r'[-:\s]')
+
+app = Flask(__name__)
+
 
 def extract_names(obj, limit=None, job=None):
     try:
@@ -26,9 +35,15 @@ def extract_names(obj, limit=None, job=None):
     except:
         return []
 
+
 def clean_text(text):
-    words = re.sub(r'[^\w\s]', '', text.lower()).split()
+    words = CLEAN_REGEX.sub('', text.lower()).split()
     return [w for w in words if w not in ENGLISH_STOP_WORDS and len(w) >= 4]
+
+
+def normalize_title(title):
+    return NORM_REGEX.sub('', title.lower())
+
 
 def train_model():
     print("Loading data...")
@@ -50,16 +65,17 @@ def train_model():
 
     df = movies[['movie_id', 'title', 'tags']].copy()
     df['tags'] = df['tags'].apply(lambda x: " ".join(x).lower())
-    df['title_norm'] = df['title'].str.lower().str.replace(r'[-:\s]', '', regex=True)
+    df['title_norm'] = df['title'].apply(normalize_title)
 
     print("Training model...")
     vectors = CountVectorizer(max_features=5000, stop_words='english').fit_transform(df['tags']).toarray()
-    sim = cosine_similarity(vectors)
+    similarity = cosine_similarity(vectors)
 
     print("Saving model...")
     with open(MODEL_FILE, 'wb') as f:
-        pickle.dump({'df': df, 'sim': sim}, f)
-    return df, sim
+        pickle.dump({'df': df, 'sim': similarity}, f)
+    return df, similarity
+
 
 def load_model():
     if os.path.exists(MODEL_FILE):
@@ -69,62 +85,58 @@ def load_model():
         return data['df'], data['sim']
     return train_model()
 
+
 # Load model on startup
 df, sim = load_model()
+movie_titles = df['title'].tolist()  # Cache for autocomplete
+
 
 @app.route('/')
 def home():
     return render_template('index.html')
 
+
 @app.route('/api/movies')
 def get_movies():
-    """Return all movie titles for autocomplete"""
-    return jsonify(df['title'].tolist())
+    return jsonify(movie_titles)
+
 
 @app.route('/api/recommend')
 def recommend():
-    """Get recommendations for a movie"""
     movie = request.args.get('movie', '')
-    norm = movie.lower().replace("-", "").replace(" ", "").replace(":", "")
+    norm = normalize_title(movie)
     matches = df[df['title_norm'] == norm]
 
     if matches.empty:
-        # Try partial match
         similar = df[df['title_norm'].str.contains(norm, regex=False)]
-        if not similar.empty:
-            suggestions = similar['title'].head(5).tolist()
-            return jsonify({'error': 'not_found', 'suggestions': suggestions})
-        return jsonify({'error': 'not_found', 'suggestions': []})
+        suggestions = similar['title'].head(5).tolist() if not similar.empty else []
+        return jsonify({'error': 'not_found', 'suggestions': suggestions})
 
     idx = matches.index[0]
     input_tags = set(df.loc[idx, 'tags'].split())
-
-    # Get top 10 candidates, then filter by threshold
-    SIMILARITY_THRESHOLD = 0.15  # Minimum 15% match
-    top_candidates = sim[idx].argsort()[-11:-1][::-1]  # Get more candidates to filter
-
-    MIN_COMMON_TAGS = 2  # Require at least 2 explainable reasons
+    top_candidates = sim[idx].argsort()[-11:-1][::-1]
 
     recommendations = []
     for i in top_candidates:
         score = sim[idx][i]
         if score < SIMILARITY_THRESHOLD:
             continue
+
         common = [t for t in (input_tags & set(df.iloc[i]['tags'].split())) if len(t) > 3][:4]
         if len(common) < MIN_COMMON_TAGS:
-            continue  # Skip if not enough explainable reasons
+            continue
+
         recommendations.append({
             'title': df.iloc[i]['title'],
             'reasons': common,
-            'match': round(score * 100)  # Convert to percentage
+            'match': round(score * 100)
         })
-        if len(recommendations) >= 5:  # Limit to 5 results
+
+        if len(recommendations) >= MAX_RECOMMENDATIONS:
             break
 
-    return jsonify({
-        'movie': df.loc[idx, 'title'],
-        'recommendations': recommendations
-    })
+    return jsonify({'movie': df.loc[idx, 'title'], 'recommendations': recommendations})
+
 
 if __name__ == '__main__':
     app.run(debug=True)
