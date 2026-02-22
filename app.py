@@ -125,6 +125,8 @@ movie_titles = df['title'].tolist()
 
 def fetch_poster_info(movie_id, title):
     """Fetch movie poster. Tries TMDB first, falls back to OMDb."""
+    poster_url = None
+
     # Try TMDB
     if TMDB_API_KEY and TMDB_API_KEY != 'your_tmdb_api_key_here':
         try:
@@ -132,26 +134,23 @@ def fetch_poster_info(movie_id, title):
             resp = requests.get(url, params={'api_key': TMDB_API_KEY}, timeout=5)
             resp.raise_for_status()
             data = resp.json()
-            return {
-                'poster_url': f"{TMDB_IMAGE_BASE}{data['poster_path']}" if data.get('poster_path') else None,
-                'source': 'tmdb'
-            }
+            if data.get('poster_path'):
+                poster_url = f"{TMDB_IMAGE_BASE}{data['poster_path']}"
+                return {'poster_url': poster_url, 'source': 'tmdb'}
+            # No poster_path — fall through to OMDb
         except Exception as e:
             logger.error(f"TMDB API error for movie {movie_id}: {e}")
 
-    # Try OMDb (searches by title)
+    # Try OMDb (searches by title, uses HTTPS)
     if OMDB_API_KEY and OMDB_API_KEY != 'your_omdb_api_key_here':
         try:
-            resp = requests.get('http://www.omdbapi.com/', params={
+            resp = requests.get('https://www.omdbapi.com/', params={
                 'apikey': OMDB_API_KEY, 't': title
             }, timeout=5)
             resp.raise_for_status()
             data = resp.json()
             if data.get('Response') == 'True' and data.get('Poster', 'N/A') != 'N/A':
-                return {
-                    'poster_url': data['Poster'],
-                    'source': 'omdb'
-                }
+                return {'poster_url': data['Poster'], 'source': 'omdb'}
         except Exception as e:
             logger.error(f"OMDb API error for '{title}': {e}")
 
@@ -265,4 +264,5 @@ def movie_info():
 
 
 if __name__ == '__main__':
-    app.run(debug=FLASK_DEBUG, port=FLASK_PORT)
+    # Always bind to localhost only — use a reverse proxy for production
+    app.run(debug=FLASK_DEBUG, port=FLASK_PORT, host='127.0.0.1')
