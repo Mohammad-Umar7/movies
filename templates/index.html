@@ -19,14 +19,18 @@
 
         <div class="search-box">
             <i class="fas fa-search search-icon"></i>
-            <input type="search" id="search" placeholder="Search for a movie..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="movie-search-xyz">
-            <button class="clear-btn" id="clearBtn" title="Clear">
+            <input type="search" id="search" placeholder="Search for a movie..."
+                   autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                   name="movie-search-xyz"
+                   role="combobox" aria-expanded="false" aria-controls="suggestions"
+                   aria-autocomplete="list" aria-label="Search for a movie">
+            <button class="clear-btn" id="clearBtn" title="Clear" aria-label="Clear search">
                 <i class="fas fa-times"></i>
             </button>
-            <div id="suggestions" class="suggestions"></div>
+            <div id="suggestions" class="suggestions" role="listbox" aria-label="Movie suggestions"></div>
         </div>
 
-        <div id="results" class="results"></div>
+        <div id="results" class="results" role="region" aria-label="Movie recommendations" aria-live="polite"></div>
 
         <div class="hint" id="hint">
             <i class="fas fa-lightbulb"></i>

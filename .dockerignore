@@ -1,0 +1,11 @@
+.git
+.env
+__pycache__
+*.pyc
+.pytest_cache
+model.pkl
+model.joblib
+*.md
+.gitignore
+.dockerignore
+tests/

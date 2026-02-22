@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python:*)",
       "Bash(pip install:*)",
-      "Bash(del \"c:\\\\Users\\\\omerj\\\\Downloads\\\\movies\\\\test_recommendations.py\")"
+      "Bash(del \"c:\\\\Users\\\\omerj\\\\Downloads\\\\movies\\\\test_recommendations.py\")",
+      "Bash(wc:*)"
     ]
   }
 }

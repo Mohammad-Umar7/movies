@@ -1,3 +1,8 @@
 pandas
 scikit-learn
-questionary
+flask
+python-dotenv
+joblib
+flask-limiter
+requests
+pytest
