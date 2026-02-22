@@ -184,7 +184,7 @@ function createMovieCard(rec, index) {
     const favBtn = document.createElement('button');
     favBtn.className = `fav-btn${isFavorite(rec.title) ? ' is-favorite' : ''}`;
     favBtn.dataset.title = rec.title;
-    favBtn.setAttribute('aria-label', `Add ${rec.title} to favorites`);
+    favBtn.setAttribute('aria-label', isFavorite(rec.title) ? `Remove ${rec.title} from favorites` : `Add ${rec.title} to favorites`);
     favBtn.innerHTML = `<i class="fa${isFavorite(rec.title) ? 's' : 'r'} fa-heart"></i>`;
     favBtn.addEventListener('click', e => {
         e.stopPropagation();

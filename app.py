@@ -138,8 +138,8 @@ def fetch_poster_info(movie_id, title):
                 poster_url = f"{TMDB_IMAGE_BASE}{data['poster_path']}"
                 return {'poster_url': poster_url, 'source': 'tmdb'}
             # No poster_path — fall through to OMDb
-        except Exception as e:
-            logger.error(f"TMDB API error for movie {movie_id}: {e}")
+        except Exception:
+            logger.error("TMDB API error for movie %s", movie_id)
 
     # Try OMDb (searches by title, uses HTTPS)
     if OMDB_API_KEY and OMDB_API_KEY != 'your_omdb_api_key_here':
@@ -151,8 +151,8 @@ def fetch_poster_info(movie_id, title):
             data = resp.json()
             if data.get('Response') == 'True' and data.get('Poster', 'N/A') != 'N/A':
                 return {'poster_url': data['Poster'], 'source': 'omdb'}
-        except Exception as e:
-            logger.error(f"OMDb API error for '{title}': {e}")
+        except Exception:
+            logger.error("OMDb API error for title '%s'", title)
 
     return None
 
@@ -264,5 +264,4 @@ def movie_info():
 
 
 if __name__ == '__main__':
-    # Always bind to localhost only — use a reverse proxy for production
-    app.run(debug=FLASK_DEBUG, port=FLASK_PORT, host='127.0.0.1')
+    app.run(debug=FLASK_DEBUG, port=FLASK_PORT, host='0.0.0.0')
