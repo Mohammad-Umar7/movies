@@ -11,56 +11,69 @@ let movies = [];
 let selectedIndex = -1;
 let debounceTimer = null;
 
-// --- XSS-safe text escaping ---
+// --- Helpers ---
+
+// Create DOM element with attributes: class, text, html, id, style, or any attribute
+function el(tag, attrs = {}) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+        if (k === 'class') node.className = v;
+        else if (k === 'text') node.textContent = v;
+        else if (k === 'html') node.innerHTML = v;
+        else if (k === 'id') node.id = v;
+        else if (k === 'style') node.style.cssText = v;
+        else node.setAttribute(k, v);
+    }
+    return node;
+}
+
+// XSS-safe text escaping
 function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
 }
 
-// --- Favorites (uses raw titles, never escaped) ---
+// Show icon + message (for error/empty states)
+function showMessage(icon, text) {
+    const div = el('div', { class: 'error-message', html: `<i class="fas ${icon}"></i>` });
+    div.append(el('p', { text }));
+    return div;
+}
+
+// --- Favorites ---
 const FAVORITES_KEY = 'movie_recommender_favorites';
 
 function getFavorites() {
-    try {
-        return JSON.parse(localStorage.getItem(FAVORITES_KEY)) || [];
-    } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(FAVORITES_KEY)) || []; }
+    catch { return []; }
 }
 
-function isFavorite(title) {
-    return getFavorites().includes(title);
-}
+const isFavorite = title => getFavorites().includes(title);
 
 function toggleFavorite(title) {
-    let favs = getFavorites();
+    const favs = getFavorites();
     const idx = favs.indexOf(title);
-    if (idx > -1) {
-        favs.splice(idx, 1);
-    } else {
-        favs.unshift(title);
-        if (favs.length > 50) favs.pop();
-    }
+    if (idx > -1) favs.splice(idx, 1);
+    else { favs.unshift(title); if (favs.length > 50) favs.pop(); }
     localStorage.setItem(FAVORITES_KEY, JSON.stringify(favs));
     updateFavoriteButtons();
 }
 
 function updateFavoriteButtons() {
     document.querySelectorAll('.fav-btn').forEach(btn => {
-        const title = btn.dataset.title;
-        const isFav = isFavorite(title);
-        btn.querySelector('i').className = `fa${isFav ? 's' : 'r'} fa-heart`;
-        btn.classList.toggle('is-favorite', isFav);
-        btn.setAttribute('aria-label', isFav ? `Remove ${title} from favorites` : `Add ${title} to favorites`);
+        const fav = isFavorite(btn.dataset.title);
+        btn.querySelector('i').className = `fa${fav ? 's' : 'r'} fa-heart`;
+        btn.classList.toggle('is-favorite', fav);
+        btn.setAttribute('aria-label', `${fav ? 'Remove' : 'Add'} ${btn.dataset.title} ${fav ? 'from' : 'to'} favorites`);
     });
 }
 
 // Load movie titles
-fetch('/api/movies')
-    .then(r => r.json())
-    .then(data => movies = data);
+fetch('/api/movies').then(r => r.json()).then(data => movies = data);
 
 // Utility
-const getMatchClass = match => match >= 40 ? 'high' : match >= 25 ? 'medium' : 'low';
+const getMatchClass = m => m >= 40 ? 'high' : m >= 25 ? 'medium' : 'low';
 
 const hideSuggestions = () => {
     suggestionsDiv.classList.remove('active');
@@ -71,43 +84,34 @@ const hideSuggestions = () => {
 
 const showClearBtn = show => clearBtn.classList.toggle('visible', show);
 
-// Search input — clear button stays instant, suggestions are debounced
+// --- Search input (debounced) ---
 searchInput.addEventListener('input', function () {
     showClearBtn(this.value.length > 0);
-
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
         const query = searchInput.value.toLowerCase();
         selectedIndex = -1;
-
-        if (query.length < 2) {
-            hideSuggestions();
-            return;
-        }
+        if (query.length < 2) { hideSuggestions(); return; }
 
         const matches = movies.filter(m => m.toLowerCase().includes(query)).slice(0, 8);
+        if (!matches.length) { hideSuggestions(); return; }
 
-        if (matches.length) {
-            suggestionsDiv.innerHTML = matches
-                .map((m, i) => `<div class="suggestion-item" role="option" id="suggestion-${i}" aria-selected="false" data-index="${i}">${escapeHtml(m)}</div>`)
-                .join('');
-            suggestionsDiv.classList.add('active');
-            searchInput.setAttribute('aria-expanded', 'true');
-        } else {
-            hideSuggestions();
-        }
+        suggestionsDiv.innerHTML = matches
+            .map((m, i) => `<div class="suggestion-item" role="option" id="suggestion-${i}" aria-selected="false">${escapeHtml(m)}</div>`)
+            .join('');
+        suggestionsDiv.classList.add('active');
+        searchInput.setAttribute('aria-expanded', 'true');
     }, 300);
 });
 
 // Keyboard navigation
 searchInput.addEventListener('keydown', function (e) {
     const items = suggestionsDiv.querySelectorAll('.suggestion-item');
-    const len = items.length;
 
     switch (e.key) {
         case 'ArrowDown':
             e.preventDefault();
-            selectedIndex = Math.min(selectedIndex + 1, len - 1);
+            selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
             updateSelection(items);
             break;
         case 'ArrowUp':
@@ -117,14 +121,8 @@ searchInput.addEventListener('keydown', function (e) {
             break;
         case 'Enter':
             e.preventDefault();
-            const value = selectedIndex >= 0 && items[selectedIndex]
-                ? items[selectedIndex].textContent
-                : this.value;
-            if (value) {
-                searchInput.value = value;
-                hideSuggestions();
-                getRecommendations(value);
-            }
+            const value = selectedIndex >= 0 && items[selectedIndex] ? items[selectedIndex].textContent : this.value;
+            if (value) { searchInput.value = value; hideSuggestions(); getRecommendations(value); }
             break;
         case 'Escape':
             hideSuggestions();
@@ -134,9 +132,8 @@ searchInput.addEventListener('keydown', function (e) {
 
 function updateSelection(items) {
     items.forEach((item, i) => {
-        const isSelected = i === selectedIndex;
-        item.classList.toggle('selected', isSelected);
-        item.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+        item.classList.toggle('selected', i === selectedIndex);
+        item.setAttribute('aria-selected', i === selectedIndex ? 'true' : 'false');
     });
     if (selectedIndex >= 0 && items[selectedIndex]) {
         items[selectedIndex].scrollIntoView({ block: 'nearest' });
@@ -146,15 +143,14 @@ function updateSelection(items) {
     }
 }
 
-// Click handlers
+// --- Click handlers ---
 suggestionsDiv.addEventListener('click', e => {
-    if (e.target.classList.contains('suggestion-item')) {
-        const movie = e.target.textContent;
-        searchInput.value = movie;
-        hideSuggestions();
-        showClearBtn(true);
-        getRecommendations(movie);
-    }
+    if (!e.target.classList.contains('suggestion-item')) return;
+    const movie = e.target.textContent;
+    searchInput.value = movie;
+    hideSuggestions();
+    showClearBtn(true);
+    getRecommendations(movie);
 });
 
 clearBtn.addEventListener('click', () => {
@@ -170,118 +166,71 @@ document.addEventListener('click', e => {
     if (!e.target.closest('.search-box')) hideSuggestions();
 });
 
-// --- Safe DOM builder helpers ---
+// --- Movie card builder ---
 function createMovieCard(rec, index) {
-    const card = document.createElement('div');
-    card.className = 'movie-card';
-    card.setAttribute('role', 'article');
-    card.setAttribute('tabindex', '0');
-    card.setAttribute('aria-label', `Recommendation: ${rec.title}`);
-    card.dataset.movieId = rec.movie_id;
-    card.id = `rec-card-${index}`;
+    const fav = isFavorite(rec.title);
 
     // Favorite button
-    const favBtn = document.createElement('button');
-    favBtn.className = `fav-btn${isFavorite(rec.title) ? ' is-favorite' : ''}`;
-    favBtn.dataset.title = rec.title;
-    favBtn.setAttribute('aria-label', isFavorite(rec.title) ? `Remove ${rec.title} from favorites` : `Add ${rec.title} to favorites`);
-    favBtn.innerHTML = `<i class="fa${isFavorite(rec.title) ? 's' : 'r'} fa-heart"></i>`;
-    favBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        toggleFavorite(rec.title);
+    const favBtn = el('button', {
+        class: `fav-btn${fav ? ' is-favorite' : ''}`,
+        'aria-label': `${fav ? 'Remove' : 'Add'} ${rec.title} ${fav ? 'from' : 'to'} favorites`,
+        html: `<i class="fa${fav ? 's' : 'r'} fa-heart"></i>`
     });
-
-    // Card content wrapper
-    const content = document.createElement('div');
-    content.className = 'card-content';
+    favBtn.dataset.title = rec.title;
+    favBtn.addEventListener('click', e => { e.stopPropagation(); toggleFavorite(rec.title); });
 
     // Poster
-    const poster = document.createElement('div');
-    poster.className = 'card-poster';
-    poster.id = `poster-${index}`;
-    poster.innerHTML = '<div class="poster-placeholder"><i class="fas fa-film"></i></div>';
+    const poster = el('div', { class: 'card-poster', id: `poster-${index}`,
+        html: '<div class="poster-placeholder"><i class="fas fa-film"></i></div>' });
 
-    // Details
-    const details = document.createElement('div');
-    details.className = 'card-details';
+    // Header: title + match badge
+    const header = el('div', { class: 'card-header' });
+    header.append(
+        el('div', { class: 'movie-title', text: rec.title }),
+        el('div', { class: `match-badge ${getMatchClass(rec.match)}`, text: `${rec.match}% match` })
+    );
 
-    // Header row
-    const header = document.createElement('div');
-    header.className = 'card-header';
-    const titleEl = document.createElement('div');
-    titleEl.className = 'movie-title';
-    titleEl.textContent = rec.title;
-    const badge = document.createElement('div');
-    badge.className = `match-badge ${getMatchClass(rec.match)}`;
-    badge.textContent = `${rec.match}% match`;
-    header.append(titleEl, badge);
+    // Meta: year + rating
+    const meta = el('div', { class: 'movie-meta' });
+    if (rec.year) meta.append(el('span', { class: 'meta-year', text: rec.year }));
+    if (rec.rating) meta.append(el('span', { class: 'meta-rating', html: `<i class="fas fa-star"></i> ${escapeHtml(String(rec.rating))}` }));
 
-    // Meta row
-    const meta = document.createElement('div');
-    meta.className = 'movie-meta';
-    if (rec.year) {
-        const year = document.createElement('span');
-        year.className = 'meta-year';
-        year.textContent = rec.year;
-        meta.appendChild(year);
-    }
-    if (rec.rating) {
-        const rating = document.createElement('span');
-        rating.className = 'meta-rating';
-        rating.innerHTML = `<i class="fas fa-star"></i> ${escapeHtml(String(rec.rating))}`;
-        meta.appendChild(rating);
-    }
+    // Genre badges
+    const genres = el('div', { class: 'movie-genres' });
+    (rec.genres || []).slice(0, 4).forEach(g => genres.append(el('span', { class: 'genre-badge', text: g })));
 
-    // Genres
-    const genres = document.createElement('div');
-    genres.className = 'movie-genres';
-    (rec.genres || []).slice(0, 4).forEach(g => {
-        const span = document.createElement('span');
-        span.className = 'genre-badge';
-        span.textContent = g;
-        genres.appendChild(span);
-    });
-
-    // Overview
-    let overviewEl = null;
-    if (rec.overview) {
-        overviewEl = document.createElement('p');
-        overviewEl.className = 'movie-overview';
-        overviewEl.textContent = rec.overview;
-    }
-
-    // Reasons
-    const reasons = document.createElement('div');
-    reasons.className = 'movie-reasons';
+    // Reason tags
+    const reasons = el('div', { class: 'movie-reasons' });
     rec.reasons.forEach(r => {
-        const span = document.createElement('span');
-        span.className = `reason-tag reason-${r.type === 'genre' ? 'genre' : 'keyword'}`;
         const icon = r.type === 'genre' ? 'fa-masks-theater' : 'fa-tag';
-        span.innerHTML = `<i class="fas ${icon}"></i> `;
-        span.appendChild(document.createTextNode(r.tag));
-        reasons.appendChild(span);
+        const span = el('span', { class: `reason-tag reason-${r.type === 'genre' ? 'genre' : 'keyword'}`, html: `<i class="fas ${icon}"></i> ` });
+        span.append(document.createTextNode(r.tag));
+        reasons.append(span);
     });
 
+    // Assemble details
+    const details = el('div', { class: 'card-details' });
     details.append(header, meta, genres);
-    if (overviewEl) details.appendChild(overviewEl);
-    details.appendChild(reasons);
+    if (rec.overview) details.append(el('p', { class: 'movie-overview', text: rec.overview }));
+    details.append(reasons);
+
+    // Assemble card
+    const content = el('div', { class: 'card-content' });
     content.append(poster, details);
+
+    const card = el('div', { class: 'movie-card', id: `rec-card-${index}`, role: 'article', tabindex: '0' });
+    card.setAttribute('aria-label', `Recommendation: ${rec.title}`);
+    card.dataset.movieId = rec.movie_id;
     card.append(favBtn, content);
 
-    // Click and keyboard handlers (no inline onclick)
     const activate = () => selectMovie(rec.title);
     card.addEventListener('click', activate);
-    card.addEventListener('keydown', e => {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            activate();
-        }
-    });
+    card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
 
     return card;
 }
 
-// Get recommendations
+// --- Fetch and display recommendations ---
 function getRecommendations(movie) {
     hint.classList.add('hidden');
     resultsDiv.innerHTML = '<div class="loading"></div>';
@@ -291,98 +240,60 @@ function getRecommendations(movie) {
         .then(data => {
             resultsDiv.innerHTML = '';
 
+            // Not found
             if (data.error) {
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'error-message';
-                errorDiv.innerHTML = '<i class="fas fa-search"></i>';
-                const p = document.createElement('p');
-                p.textContent = `Movie "${movie}" not found.`;
-                errorDiv.appendChild(p);
-
-                if (data.suggestions && data.suggestions.length) {
-                    const didYouMean = document.createElement('p');
-                    didYouMean.style.marginTop = '15px';
-                    didYouMean.textContent = 'Did you mean:';
-                    errorDiv.appendChild(didYouMean);
-
-                    const list = document.createElement('div');
-                    list.className = 'suggestions-list';
+                const msg = showMessage('fa-search', `Movie "${movie}" not found.`);
+                if (data.suggestions?.length) {
+                    msg.append(el('p', { text: 'Did you mean:', style: 'margin-top: 15px' }));
+                    const list = el('div', { class: 'suggestions-list' });
                     data.suggestions.forEach(s => {
-                        const link = document.createElement('span');
-                        link.className = 'suggestion-link';
-                        link.textContent = s;
+                        const link = el('span', { class: 'suggestion-link', text: s });
                         link.addEventListener('click', () => selectMovie(s));
-                        list.appendChild(link);
+                        list.append(link);
                     });
-                    errorDiv.appendChild(list);
+                    msg.append(list);
                 }
-
-                resultsDiv.appendChild(errorDiv);
+                resultsDiv.append(msg);
                 return;
             }
 
-            const headerP = document.createElement('p');
-            headerP.className = 'results-header';
-            headerP.textContent = 'Recommendations for ';
-            const headerSpan = document.createElement('span');
-            headerSpan.textContent = data.movie;
-            headerP.appendChild(headerSpan);
-            resultsDiv.appendChild(headerP);
+            // Results header
+            const header = el('p', { class: 'results-header', text: 'Recommendations for ' });
+            header.append(el('span', { text: data.movie }));
+            resultsDiv.append(header);
 
+            // Empty results
             if (!data.recommendations.length) {
-                const msg = data.empty_message || 'No strong matches found for this movie.';
-                const emptyDiv = document.createElement('div');
-                emptyDiv.className = 'error-message';
-                emptyDiv.innerHTML = '<i class="fas fa-film"></i>';
-                const emptyP = document.createElement('p');
-                emptyP.textContent = msg;
-                emptyDiv.appendChild(emptyP);
-                const tipP = document.createElement('p');
-                tipP.style.cssText = 'font-size: 0.9rem; margin-top: 10px; color: #6b7280;';
-                tipP.textContent = 'Try a more popular movie for better results.';
-                emptyDiv.appendChild(tipP);
-                resultsDiv.appendChild(emptyDiv);
+                const msg = showMessage('fa-film', data.empty_message || 'No strong matches found for this movie.');
+                msg.append(el('p', { text: 'Try a more popular movie for better results.', style: 'font-size: 0.9rem; margin-top: 10px; color: #6b7280' }));
+                resultsDiv.append(msg);
             } else {
-                data.recommendations.forEach((rec, index) => {
-                    resultsDiv.appendChild(createMovieCard(rec, index));
-                });
+                data.recommendations.forEach((rec, i) => resultsDiv.append(createMovieCard(rec, i)));
             }
 
             resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-            // Fetch posters asynchronously
-            data.recommendations.forEach((rec, index) => {
-                if (rec.movie_id) {
-                    fetch(`/api/movie-info?id=${rec.movie_id}&title=${encodeURIComponent(rec.title)}`)
-                        .then(r => r.json())
-                        .then(info => {
-                            const posterDiv = document.getElementById(`poster-${index}`);
-                            if (posterDiv && info.poster_url) {
-                                const img = document.createElement('img');
-                                img.src = info.poster_url;
-                                img.alt = `${rec.title} poster`;
-                                img.loading = 'lazy';
-                                posterDiv.innerHTML = '';
-                                posterDiv.appendChild(img);
-                            }
-                        })
-                        .catch(() => { });
-                }
+            // Fetch posters async
+            data.recommendations.forEach((rec, i) => {
+                if (!rec.movie_id) return;
+                fetch(`/api/movie-info?id=${rec.movie_id}&title=${encodeURIComponent(rec.title)}`)
+                    .then(r => r.json())
+                    .then(info => {
+                        const div = $(`poster-${i}`);
+                        if (!div || !info.poster_url) return;
+                        div.innerHTML = '';
+                        div.append(el('img', { src: info.poster_url, alt: `${rec.title} poster`, loading: 'lazy' }));
+                    })
+                    .catch(() => {});
             });
         })
         .catch(() => {
             resultsDiv.innerHTML = '';
-            const errDiv = document.createElement('div');
-            errDiv.className = 'error-message';
-            errDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
-            const errP = document.createElement('p');
-            errP.textContent = 'Something went wrong. Please try again.';
-            errDiv.appendChild(errP);
-            resultsDiv.appendChild(errDiv);
+            resultsDiv.append(showMessage('fa-exclamation-triangle', 'Something went wrong. Please try again.'));
         });
 }
 
-// Select movie
+// Select movie (from card click or suggestion)
 function selectMovie(movie) {
     searchInput.value = movie;
     showClearBtn(true);

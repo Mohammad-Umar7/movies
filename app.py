@@ -125,28 +125,21 @@ movie_titles = df['title'].tolist()
 
 def fetch_poster_info(movie_id, title):
     """Fetch movie poster. Tries TMDB first, falls back to OMDb."""
-    poster_url = None
-
-    # Try TMDB
     if TMDB_API_KEY and TMDB_API_KEY != 'your_tmdb_api_key_here':
         try:
-            url = f'https://api.themoviedb.org/3/movie/{movie_id}'
-            resp = requests.get(url, params={'api_key': TMDB_API_KEY}, timeout=5)
+            resp = requests.get(f'https://api.themoviedb.org/3/movie/{movie_id}',
+                                params={'api_key': TMDB_API_KEY}, timeout=5)
             resp.raise_for_status()
-            data = resp.json()
-            if data.get('poster_path'):
-                poster_url = f"{TMDB_IMAGE_BASE}{data['poster_path']}"
-                return {'poster_url': poster_url, 'source': 'tmdb'}
-            # No poster_path — fall through to OMDb
+            path = resp.json().get('poster_path')
+            if path:
+                return {'poster_url': f"{TMDB_IMAGE_BASE}{path}", 'source': 'tmdb'}
         except Exception:
             logger.error("TMDB API error for movie %s", movie_id)
 
-    # Try OMDb (searches by title, uses HTTPS)
     if OMDB_API_KEY and OMDB_API_KEY != 'your_omdb_api_key_here':
         try:
-            resp = requests.get('https://www.omdbapi.com/', params={
-                'apikey': OMDB_API_KEY, 't': title
-            }, timeout=5)
+            resp = requests.get('https://www.omdbapi.com/',
+                                params={'apikey': OMDB_API_KEY, 't': title}, timeout=5)
             resp.raise_for_status()
             data = resp.json()
             if data.get('Response') == 'True' and data.get('Poster', 'N/A') != 'N/A':
@@ -203,17 +196,11 @@ def recommend():
         if len(common) < MIN_COMMON_TAGS:
             continue
 
-        # Categorize reasons as genre or keyword
-        categorized_reasons = []
-        for tag in common:
-            tag_type = 'genre' if tag in genres_set else 'keyword'
-            categorized_reasons.append({'tag': tag, 'type': tag_type})
-
         row = df.iloc[i]
         recommendations.append({
             'title': row['title'],
             'movie_id': int(row['movie_id']),
-            'reasons': categorized_reasons,
+            'reasons': [{'tag': t, 'type': 'genre' if t in genres_set else 'keyword'} for t in common],
             'match': round(score * 100),
             'year': str(row['release_date'])[:4] if pd.notna(row['release_date']) else None,
             'rating': round(float(row['vote_average']), 1) if pd.notna(row['vote_average']) else None,
@@ -225,19 +212,14 @@ def recommend():
             break
 
     if not recommendations:
-        weak_matches = [i for i in top_candidates if sim[idx][i] >= SIMILARITY_THRESHOLD]
-        if not weak_matches:
-            reason = 'low_similarity'
-            message = 'This movie has a very unique profile. No similar movies found.'
-        else:
-            reason = 'no_common_tags'
-            message = 'Similar movies exist but share too few distinguishing features.'
+        has_similar = any(sim[idx][i] >= SIMILARITY_THRESHOLD for i in top_candidates)
         return jsonify({
             'movie': df.loc[idx, 'title'],
             'movie_id': int(df.loc[idx, 'movie_id']),
             'recommendations': [],
-            'empty_reason': reason,
-            'empty_message': message
+            'empty_reason': 'no_common_tags' if has_similar else 'low_similarity',
+            'empty_message': ('Similar movies exist but share too few distinguishing features.'
+                              if has_similar else 'This movie has a very unique profile. No similar movies found.')
         })
 
     return jsonify({

@@ -1,4 +1,3 @@
-import json
 import sys
 import os
 
@@ -63,8 +62,7 @@ class TestExtractNames:
 
     def test_with_job_filter(self):
         data = '[{"name": "John", "job": "Director"}, {"name": "Jane", "job": "Writer"}]'
-        result = extract_names(data, job="Director")
-        assert result == ["John"]
+        assert extract_names(data, job="Director") == ["John"]
 
     def test_invalid_input(self):
         assert extract_names("not valid json") == []
@@ -72,92 +70,70 @@ class TestExtractNames:
 
     def test_spaces_removed(self):
         data = '[{"name": "Robert Downey Jr."}]'
-        result = extract_names(data)
-        assert result == ["RobertDowneyJr."]
+        assert extract_names(data) == ["RobertDowneyJr."]
 
 
 class TestHomeEndpoint:
     def test_returns_html(self, client):
-        response = client.get('/')
-        assert response.status_code == 200
-        assert b'Movie Recommender' in response.data
+        resp = client.get('/')
+        assert resp.status_code == 200
+        assert b'Movie Recommender' in resp.data
 
 
 class TestMoviesEndpoint:
     def test_returns_list(self, client):
-        response = client.get('/api/movies')
-        assert response.status_code == 200
-        data = json.loads(response.data)
+        data = client.get('/api/movies').get_json()
         assert isinstance(data, list)
         assert len(data) > 0
 
     def test_contains_known_movie(self, client):
-        response = client.get('/api/movies')
-        data = json.loads(response.data)
-        titles_lower = [t.lower() for t in data]
-        assert 'avatar' in titles_lower
+        titles = [t.lower() for t in client.get('/api/movies').get_json()]
+        assert 'avatar' in titles
 
 
 class TestRecommendEndpoint:
     def test_valid_movie(self, client):
-        response = client.get('/api/recommend?movie=Avatar')
-        assert response.status_code == 200
-        data = json.loads(response.data)
+        data = client.get('/api/recommend?movie=Avatar').get_json()
         assert 'movie' in data
         assert 'recommendations' in data
 
     def test_missing_param(self, client):
-        response = client.get('/api/recommend?movie=')
-        assert response.status_code == 400
-        data = json.loads(response.data)
-        assert data['error'] == 'missing_param'
+        resp = client.get('/api/recommend?movie=')
+        assert resp.status_code == 400
+        assert resp.get_json()['error'] == 'missing_param'
 
     def test_no_movie_param(self, client):
-        response = client.get('/api/recommend')
-        assert response.status_code == 400
+        assert client.get('/api/recommend').status_code == 400
 
     def test_too_long_input(self, client):
-        response = client.get(f'/api/recommend?movie={"x" * 201}')
-        assert response.status_code == 400
-        data = json.loads(response.data)
-        assert data['error'] == 'invalid_input'
+        resp = client.get(f'/api/recommend?movie={"x" * 201}')
+        assert resp.status_code == 400
+        assert resp.get_json()['error'] == 'invalid_input'
 
     def test_not_found_movie(self, client):
-        response = client.get('/api/recommend?movie=zzznotarealmovie')
-        assert response.status_code == 200
-        data = json.loads(response.data)
+        data = client.get('/api/recommend?movie=zzznotarealmovie').get_json()
         assert data['error'] == 'not_found'
 
     def test_returns_metadata(self, client):
-        response = client.get('/api/recommend?movie=Avatar')
-        data = json.loads(response.data)
+        data = client.get('/api/recommend?movie=Avatar').get_json()
         if data.get('recommendations'):
             rec = data['recommendations'][0]
-            assert 'year' in rec
-            assert 'genres' in rec
-            assert 'rating' in rec
-            assert 'overview' in rec
-            assert 'movie_id' in rec
-            assert 'reasons' in rec
-            # Reasons should be categorized
-            assert isinstance(rec['reasons'], list)
+            for key in ('year', 'genres', 'rating', 'overview', 'movie_id', 'reasons'):
+                assert key in rec
             if rec['reasons']:
                 assert 'tag' in rec['reasons'][0]
                 assert 'type' in rec['reasons'][0]
 
     def test_movie_id_in_response(self, client):
-        response = client.get('/api/recommend?movie=Avatar')
-        data = json.loads(response.data)
+        data = client.get('/api/recommend?movie=Avatar').get_json()
         assert 'movie_id' in data
 
 
 class TestMovieInfoEndpoint:
     def test_missing_id(self, client):
-        response = client.get('/api/movie-info')
-        assert response.status_code == 400
+        assert client.get('/api/movie-info').status_code == 400
 
     def test_invalid_id(self, client):
-        response = client.get('/api/movie-info?id=abc')
-        assert response.status_code == 400
-        data = json.loads(response.data)
-        assert data['error'] == 'invalid_id'
+        resp = client.get('/api/movie-info?id=abc')
+        assert resp.status_code == 400
+        assert resp.get_json()['error'] == 'invalid_id'
